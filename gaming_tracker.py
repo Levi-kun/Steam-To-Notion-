@@ -560,6 +560,28 @@ class GamingTracker:
             logging.debug(f"Could not calculate achievements for {app_id}: {e}")
             return 0
     
+    def is_valid_game(self, game_details: Dict) -> bool:
+        """Check if the app is a valid game (not DLC or software)"""
+        # Check if the type is explicitly 'game'
+        if game_details.get('type', '').lower() != 'game':
+            logging.debug(f"Skipping {game_details.get('name', 'Unknown')} - type is {game_details.get('type', 'unknown')}")
+            return False
+        
+        # Additional check: ensure it has genres typical of games
+        genres = game_details.get('genres', [])
+        if not genres:
+            logging.debug(f"Skipping {game_details.get('name', 'Unknown')} - no genres found")
+            return False
+            
+        # Check for non-game categories in genres
+        non_game_genres = {'Utilities', 'Software', 'Video Production', 'Animation & Modeling', 'Design & Illustration'}
+        has_game_genres = any(genre.get('description') not in non_game_genres for genre in genres)
+        if not has_game_genres:
+            logging.debug(f"Skipping {game_details.get('name', 'Unknown')} - only non-game genres found")
+            return False
+            
+        return True
+    
     def sync_games_to_notion(self, update_existing: bool = True, include_achievements: bool = True) -> Dict:
         """Enhanced sync with session tracking and achievements"""
         logging.info("Starting enhanced game sync to Notion...")
@@ -570,15 +592,21 @@ class GamingTracker:
         
         if not games:
             logging.warning("No games found in Steam library")
-            return {'synced': 0, 'updated': 0, 'errors': 0}
+            return {'synced': 0, 'updated': 0, 'errors': 0, 'skipped': 0}
         
         # Get existing games from Notion
         existing_games = self.notion_api.get_existing_games() if update_existing else {}
         
-        synced = updated = errors = 0
+        synced = updated = errors = skipped = 0
         
         for i, game in enumerate(games):
+            
             app_id = game.get('appid')
+            # Skip if not a valid game
+                if not self.is_valid_game(game_details):
+                    logging.info(f"Skipped {game.get('name', 'Unknown')} (AppID: {app_id}) - not a game")
+                    skipped += 1
+                    continue
             
             try:
                 # Get detailed game information
@@ -640,6 +668,13 @@ class GamingTracker:
         """Generate comprehensive gaming report with sessions and achievements"""
         logging.info("Generating enhanced gaming report...")
         
+        valid_games = []
+        for game in games:
+            details = self.steam_api.get_game_details(game.get('appid'))
+            if self.is_valid_game(details):
+                valid_games.append({**game, **details})
+            time.sleep(0.01)
+            
         # Get all owned games
         owned_games_data = self.steam_api.get_owned_games()
         games = owned_games_data.get('response', {}).get('games', [])
@@ -656,6 +691,12 @@ class GamingTracker:
         sample_games = games[:30]  # Reduced sample to speed up report generation
         detailed_games = []
         
+        for game in sample_games:
+            details = self.steam_api.get_game_details(game.get('appid'))
+            if details and self.is_valid_game(details):
+                detailed_games.append({**game, **details})
+            time.sleep(0.01)
+            
         logging.info("Analyzing sample games for detailed insights...")
         for game in sample_games:
             details = self.steam_api.get_game_details(game.get('appid'))
