@@ -26,7 +26,7 @@ def test_steam_api(api_key, steam_id):
         
         if 'response' in data and 'players' in data['response'] and data['response']['players']:
             player = data['response']['players'][0]
-             print(f"✅ Steam API working! Connected to: {player.get('personaname', 'Unknown')}")
+            print(f"✅ Steam API working! Connected to: {player.get('personaname', 'Unknown')}")
             return True
         else:
             print("❌ Steam API returned empty response. Check your Steam ID.")
