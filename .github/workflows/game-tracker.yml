@@ -41,7 +41,7 @@ jobs:
         python-version: ${{ env.PYTHON_VERSION }}
         
     - name: Cache Python packages
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -54,7 +54,7 @@ jobs:
         pip install -r requirements.txt
         
     - name: Load session data from previous runs
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           gaming_sessions.json
@@ -142,7 +142,7 @@ jobs:
         "
         
     - name: Upload gaming reports as artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: gaming-reports-${{ github.run_number }}
         path: |
