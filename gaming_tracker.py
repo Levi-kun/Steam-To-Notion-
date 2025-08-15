@@ -549,7 +549,7 @@ class GamingTracker:
             logging.debug(f"Could not calculate achievements for {app_id}: {e}")
             return 0
     
-   def sync_games_to_notion(self, update_existing: bool = True, include_achievements: bool = True) -> Dict:
+    def sync_games_to_notion(self, update_existing: bool = True, include_achievements: bool = True) -> Dict:
         """Enhanced sync with session tracking and achievements"""
         logging.info("Starting enhanced game sync to Notion...")
         
