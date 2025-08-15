@@ -51,7 +51,7 @@ class SteamAPI:
         
         url = f"{self.base_url}/IPlayerService/GetRecentlyPlayedGames/v0001/"
         params = {
-            'key': self.api_key
+            'key': self.api_key,
             'steamid': self.steam_id,
             'format': 'json'
         }
@@ -76,7 +76,7 @@ class SteamAPI:
             response = requests.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            return data.get(str(app_id), {}).get('data', {}))
+            return data.get(str(app_id), {}).get('data', {})
         except request.RequestException as e:
             logging.error(f"Error fetching game details for {app_id}: {e}")
             return {}
@@ -135,7 +135,7 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.error(f"Error fetching player stats: {e}")
             return {}
-class SessonTracker:
+class SessionTracker:
     """Track gaming sessions based on playtime changes"""
     
     def __init__(self):
@@ -288,7 +288,7 @@ class NotionAPI:
         }
 
         payload = {
-            "parent": "database_id": self.database_id,
+            "parent": {"database_id": self.database_id},
             "properties": properties
         }
         
@@ -303,8 +303,7 @@ class NotionAPI:
                 logging.error(f"Response: {e.response.text}")
             return None
         
-   def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0,
-                         achievement_completion: float = 0) -> bool:
+    def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> bool:
         """Update an existing game entry"""
         url = f"{self.base_url}/pages/{page_id}"
         
