@@ -1,16 +1,21 @@
+"""
+Steam-Notion Gaming Tracker - Enhanced Version
+A comprehensive tool to monitor gaming habits, rate games, track sessions,
+and analyze spending patterns by connecting Steam API with Notion database.
+"""
+
 import os
 import time
 import json
 import requests
-import logging
-
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
+import logging
 from collections import defaultdict
 
-
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO, 
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('gaming_tracker.log'),
@@ -19,7 +24,7 @@ logging.basicConfig(
 )
 
 class SteamAPI:
-    """Handle Steam Web API Interactions"""
+    """Handle Steam Web API interactions"""
     
     def __init__(self, api_key: str, steam_id: str):
         self.api_key = api_key
@@ -27,8 +32,7 @@ class SteamAPI:
         self.base_url = "http://api.steampowered.com"
         
     def get_owned_games(self) -> Dict:
-        """Get list of games owned by the user"""
-        
+        """Get list of games owned by user"""
         url = f"{self.base_url}/IPlayerService/GetOwnedGames/v0001/"
         params = {
             'key': self.api_key,
@@ -45,10 +49,9 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.error(f"Error fetching owned games: {e}")
             return {}
-        
+    
     def get_recently_played_games(self) -> Dict:
-        """Get recently played games from the user"""
-        
+        """Get recently played games (last 2 weeks)"""
         url = f"{self.base_url}/IPlayerService/GetRecentlyPlayedGames/v0001/"
         params = {
             'key': self.api_key,
@@ -63,16 +66,16 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.error(f"Error fetching recently played games: {e}")
             return {}
-        
+    
     def get_game_details(self, app_id: int) -> Dict:
         """Get detailed information about a specific game"""
-        url = f"{self.base_url}/ISteamApps/GetAppDetails/v0001/"
+        url = f"http://store.steampowered.com/api/appdetails"
         params = {
             'appids': app_id,
             'format': 'json'
         }
         
-        try: 
+        try:
             response = requests.get(url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -90,6 +93,7 @@ class SteamAPI:
             'appid': app_id,
             'format': 'json'
         }
+        
         try:
             response = requests.get(url, params=params)
             if response.status_code == 403:
@@ -100,10 +104,9 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.debug(f"Error fetching achievements for {app_id}: {e}")
             return {}
-        
-    def game_get_schema(self, app_id: int) -> Dict:
+    
+    def get_game_schema(self, app_id: int) -> Dict:
         """Get achievement schema for a game"""
-        
         url = f"{self.base_url}/ISteamUserStats/GetSchemaForGame/v2/"
         params = {
             'key': self.api_key,
@@ -118,7 +121,7 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.debug(f"Error fetching schema for {app_id}: {e}")
             return {}
-        
+    
     def get_player_stats(self) -> Dict:
         """Get player statistics"""
         url = f"{self.base_url}/ISteamUser/GetPlayerSummaries/v0002/"
@@ -142,28 +145,25 @@ class SessionTracker:
     def __init__(self):
         self.session_file = 'gaming_sessions.json'
         self.load_sessions()
-        
+    
     def load_sessions(self):
         """Load existing session data"""
-        
-        try: 
-            with open(self.session_file, "r") as f:
+        try:
+            with open(self.session_file, 'r') as f:
                 self.sessions = json.load(f)
         except FileNotFoundError:
             self.sessions = {}
-            
+    
     def save_sessions(self):
         """Save session data to file"""
-        try:
-            with open(self.session_file, 'w') as f:
-                json.dump(self.sessions, f, indent=2)
-        except Exception as e:
-            logging.error(f"Error saving sessions: {e}")
-            
+        with open(self.session_file, 'w') as f:
+            json.dump(self.sessions, f, indent=2)
+    
     def update_session_count(self, app_id: int, current_playtime: int, last_played: int) -> int:
         """Update session count based on playtime changes"""
         app_id_str = str(app_id)
-    
+        
+        # Initialize if not exists
         if app_id_str not in self.sessions:
             self.sessions[app_id_str] = {
                 'session_count': 1 if current_playtime > 0 else 0,
@@ -173,19 +173,21 @@ class SessionTracker:
         else:
             session_data = self.sessions[app_id_str]
             
+            # Check if playtime increased (new session)
             if current_playtime > session_data.get('last_playtime', 0):
+                # Only increment if significant time passed since last session (more than 1 hour)
                 last_session_time = session_data.get('last_played', 0)
-                
-                if last_played - last_session_time > 3600:
+                if last_played - last_session_time > 3600:  # 1 hour in seconds
                     session_data['session_count'] += 1
-                    
+                
                 session_data['last_playtime'] = current_playtime
                 session_data['last_played'] = last_played
+        
         self.save_sessions()
         return self.sessions[app_id_str]['session_count']
-    
+
 class NotionAPI:
-    """Handle Notion API interaction with enhanced properties"""
+    """Handle Notion API interactions with enhanced properties"""
     
     def __init__(self, token: str, database_id: str):
         self.token = token
@@ -193,9 +195,8 @@ class NotionAPI:
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
+            "Notion-Version": "2022-06-28"  # Latest stable Notion API version
         }
-        
         self.base_url = "https://api.notion.com/v1"
     
     def calculate_average_rating(self, ratings: Dict[str, float]) -> float:
@@ -203,32 +204,35 @@ class NotionAPI:
         valid_ratings = [score for score in ratings.values() if score > 0]
         return round(sum(valid_ratings) / len(valid_ratings), 1) if valid_ratings else 0
     
-    def create_game_entry(self, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> Optional[str]:
-        """Create a game entry in a Notion database"""
+    def create_game_entry(self, game_data: Dict, session_count: int = 0, 
+                         achievement_completion: float = 0) -> Optional[str]:
+        """Create a new game entry in Notion database"""
         url = f"{self.base_url}/pages"
         
         # Calculate hours played
         playtime_minutes = game_data.get('playtime_forever', 0)
-        hours_played = round(playtime_minutes / 60, 2) if playtime_minutes > 0 else 0
+        hours_played = round(playtime_minutes / 60, 1) if playtime_minutes > 0 else 0
         
         # Calculate cost per hour if price is available
-        price = game_data.get('price_overview', {}).get('final', 0)/100 if game_data.get('price_overview') else 0
+        price = game_data.get('price_overview', {}).get('final', 0) / 100 if game_data.get('price_overview') else 0
         cost_per_hour = round(price / hours_played, 2) if hours_played > 0 and price > 0 else 0
         
+        # Format last played date
         last_played_date = None
         if game_data.get('rtime_last_played'):
             last_played_date = datetime.fromtimestamp(game_data.get('rtime_last_played')).isoformat()
-            
+        
+        # Format release date
         release_date = None
         if game_data.get('release_date', {}).get('date'):
             try:
                 # Try to parse the release date
                 release_str = game_data['release_date']['date']
-                
+                # Handle various date formats from Steam
                 for fmt in ['%b %d, %Y', '%b %Y', '%Y']:
                     try:
                         parsed_date = datetime.strptime(release_str, fmt)
-                        release_date = parsed_date.isoformat()[:10]
+                        release_date = parsed_date.isoformat()[:10]  # Just the date part
                         break
                     except ValueError:
                         continue
@@ -263,22 +267,28 @@ class NotionAPI:
                 ]
             },
             "Achievement Completion": {"number": achievement_completion},
+            
+            # Rating categories (0-10)
             "Gameplay Rating": {"number": 0},
             "Story/Worldbuilding Rating": {"number": 0},
             "Graphics/Art Style Rating": {"number": 0},
             "Music/Sound Design Rating": {"number": 0},
             "Replayability Rating": {"number": 0},
             "Emotional Impact Rating": {"number": 0},
+            # Overall Rating will be calculated by Notion formula, not set here
+            
             "Notes": {"rich_text": []},
             "Status": {"select": {"name": "Owned"}},
             "Platform": {"multi_select": [{"name": "Steam"}]},
+            
+            # Game description
             "Description": {
                 "rich_text": [
                     {"text": {"content": game_data.get('short_description', '')[:2000]}}  # Notion has char limits
                 ]
             }
         }
-
+        
         payload = {
             "parent": {"database_id": self.database_id},
             "properties": properties
@@ -290,12 +300,13 @@ class NotionAPI:
             logging.info(f"Created entry for: {game_data.get('name')}")
             return response.json().get('id')
         except requests.RequestException as e:
-            logging.error(f"Error creating Notion Entry for {game_data.get('name')}: {e}")
-            if hasattr(e, "response"):
+            logging.error(f"Error creating Notion entry for {game_data.get('name')}: {e}")
+            if hasattr(e, 'response'):
                 logging.error(f"Response: {e.response.text}")
             return None
-        
-    def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> bool:
+    
+    def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0,
+                         achievement_completion: float = 0) -> bool:
         """Update an existing game entry"""
         url = f"{self.base_url}/pages/{page_id}"
         
@@ -410,220 +421,6 @@ class NotionAPI:
         """
         print(schema_info)
         return True
-    
-class GameAnalyzer:
-    """Enhanced game analysis with session and rating data"""
-    
-    @staticmethod
-    def analyze_playtime_distribution(games: List[Dict]) -> Dict:
-        """Analyze playtime distribution across games"""
-        total_playtime = sum(game.get('playtime_forever', 0) for game in games)
-        total_hours = total_playtime / 60
-        
-        # Categorize games by playtime
-        categories = {
-            'unplayed': [],
-            'light_play': [],    # < 5 hours
-            'moderate_play': [], # 5-20 hours
-            'heavy_play': [],    # 20-100 hours
-            'excessive_play': [] # > 100 hours
-        }
-        
-        for game in games:
-            hours = game.get('playtime_forever', 0) / 60
-            name = game.get('name', 'Unknown')
-            
-            if hours == 0:
-                categories['unplayed'].append(name)
-            elif hours < 5:
-                categories['light_play'].append((name, round(hours, 1)))
-            elif hours < 20:
-                categories['moderate_play'].append((name, round(hours, 1)))
-            elif hours < 100:
-                categories['heavy_play'].append((name, round(hours, 1)))
-            else:
-                categories['excessive_play'].append((name, round(hours, 1)))
-        
-        return {
-            'total_hours': round(total_hours, 1),
-            'total_games': len(games),
-            'categories': categories,
-            'unplayed_percentage': round(len(categories['unplayed']) / len(games) * 100, 1) if len(games) > 0 else 0
-        }
-    
-    @staticmethod
-    def analyze_genres(games: List[Dict]) -> Dict:
-        """Analyze preferred genres"""
-        genre_stats = {}
-        
-        for game in games:
-            genres = game.get('genres', [])
-            playtime = game.get('playtime_forever', 0)
-            
-            for genre in genres:
-                genre_name = genre.get('description', 'Unknown')
-                if genre_name not in genre_stats:
-                    genre_stats[genre_name] = {
-                        'count': 0,
-                        'total_playtime': 0,
-                        'games': []
-                    }
-                
-                genre_stats[genre_name]['count'] += 1
-                genre_stats[genre_name]['total_playtime'] += playtime
-                genre_stats[genre_name]['games'].append(game.get('name', 'Unknown'))
-        
-        # Sort by total playtime
-        sorted_genres = sorted(
-            genre_stats.items(),
-            key=lambda x: x[1]['total_playtime'],
-            reverse=True
-        )
-        
-        return dict(sorted_genres)
-    
-    @staticmethod
-    def analyze_sessions(session_tracker: SessionTracker, games: List[Dict]) -> Dict:
-        """Analyze gaming sessions"""
-        session_stats = {
-            'total_sessions': 0,
-            'avg_sessions_per_game': 0,
-            'most_sessioned_games': [],
-            'session_efficiency': []  # Hours per session
-        }
-        
-        for game in games:
-            app_id = game.get('appid')
-            if str(app_id) in session_tracker.sessions:
-                session_count = session_tracker.sessions[str(app_id)]['session_count']
-                session_stats['total_sessions'] += session_count
-                
-                hours_played = game.get('playtime_forever', 0) / 60
-                if session_count > 0:
-                    hours_per_session = round(hours_played / session_count, 1)
-                    session_stats['session_efficiency'].append({
-                        'name': game.get('name', 'Unknown'),
-                        'sessions': session_count,
-                        'hours_per_session': hours_per_session
-                    })
-        
-        # Calculate averages
-        total_games_with_sessions = len([g for g in games if str(g.get('appid', 0)) in session_tracker.sessions])
-        if total_games_with_sessions > 0:
-            session_stats['avg_sessions_per_game'] = round(
-                session_stats['total_sessions'] / total_games_with_sessions, 1
-            )
-        
-        # Sort by session count
-        session_stats['session_efficiency'].sort(key=lambda x: x['sessions'], reverse=True)
-        session_stats['most_sessioned_games'] = session_stats['session_efficiency'][:10]
-        
-        return session_stats
-
-class GamingTracker:
-    """Enhanced main application class"""
-    
-    def __init__(self, steam_api_key: str, steam_id: str, notion_token: str, notion_database_id: str):
-        self.steam_api = SteamAPI(steam_api_key, steam_id)
-        self.notion_api = NotionAPI(notion_token, notion_database_id)
-        self.analyzer = GameAnalyzer()
-        self.session_tracker = SessionTracker()
-    
-    def calculate_achievement_completion(self, app_id: int) -> float:
-        """Calculate achievement completion percentage"""
-        try:
-            achievements_data = self.steam_api.get_game_achievements(app_id)
-            if not achievements_data.get('playerstats', {}).get('achievements'):
-                return 0
-            
-            achievements = achievements_data['playerstats']['achievements']
-            if not achievements:
-                return 0
-            
-            completed = sum(1 for ach in achievements if ach.get('achieved') == 1)
-            total = len(achievements)
-            
-            return round((completed / total) * 100, 1) if total > 0 else 0
-            
-        except Exception as e:
-            logging.debug(f"Could not calculate achievements for {app_id}: {e}")
-            return 0
-    
-    def sync_games_to_notion(self, update_existing: bool = True, include_achievements: bool = True) -> Dict:
-        """Enhanced sync with session tracking and achievements"""
-        logging.info("Starting enhanced game sync to Notion...")
-        
-        # Get games from Steam
-        owned_games_data = self.steam_api.get_owned_games()
-        games = owned_games_data.get('response', {}).get('games', [])
-        
-        if not games:
-            logging.warning("No games found in Steam library")
-            return {'synced': 0, 'updated': 0, 'errors': 0}
-        
-        # Get existing games from Notion
-        existing_games = self.notion_api.get_existing_games() if update_existing else {}
-        
-        synced = updated = errors = 0
-        
-        for i, game in enumerate(games):
-            app_id = game.get('appid')
-            
-            try:
-                # Get detailed game information
-                game_details = self.steam_api.get_game_details(app_id)
-                
-                # Calculate session count
-                session_count = self.session_tracker.update_session_count(
-                    app_id,
-                    game.get('playtime_forever', 0),
-                    game.get('rtime_last_played', 0)
-                )
-                
-                # Calculate achievement completion
-                achievement_completion = 0
-                if include_achievements:
-                    achievement_completion = self.calculate_achievement_completion(app_id)
-                
-                # Merge basic info with detailed info
-                full_game_data = {**game, **game_details}
-                
-                if app_id in existing_games and update_existing:
-                    # Update existing entry
-                    if self.notion_api.update_game_entry(
-                        existing_games[app_id], 
-                        full_game_data, 
-                        session_count,
-                        achievement_completion
-                    ):
-                        updated += 1
-                    else:
-                        errors += 1
-                elif app_id not in existing_games:
-                    # Create new entry
-                    if self.notion_api.create_game_entry(
-                        full_game_data, 
-                        session_count,
-                        achievement_completion
-                    ):
-                        synced += 1
-                    else:
-                        errors += 1
-                
-                # Progress logging
-                if (i + 1) % 10 == 0:
-                    logging.info(f"Processed {i + 1}/{len(games)} games")
-                
-                # Rate limiting to avoid hitting API limits
-                time.sleep(1)  # Increased delay for stability
-                
-            except Exception as e:
-                logging.error(f"Error processing game {game.get('name')}: {e}")
-                errors += 1
-        
-        results = {'synced': synced, 'updated': updated, 'errors': errors}
-        logging.info(f"Enhanced sync completed: {results}")
-        return results
 
 class GameAnalyzer:
     """Enhanced game analysis with session and rating data"""
