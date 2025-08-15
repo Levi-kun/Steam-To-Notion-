@@ -10,9 +10,9 @@ from collections import defaultdict
 
 
 logging.basicConfig(
-    level = logging.INFO, 
-    format='%(acstime)s - %(levelname)s - %(message)s',
-    handlers = [
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
         logging.FileHandler('gaming_tracker.log'),
         logging.StreamHandler()
     ]
@@ -27,9 +27,9 @@ class SteamAPI:
         self.base_url = "http://api.steampowered.com"
         
     def get_owned_games(self) -> Dict:
-        """ Get List of games owned by the user! """
+        """Get list of games owned by the user"""
         
-        url = f"{self.base_url}/IPlayerService/IPlayerService/GetOwnedGames/v0001/"
+        url = f"{self.base_url}/IPlayerService/GetOwnedGames/v0001/"
         params = {
             'key': self.api_key,
             'steamid': self.steam_id,
@@ -47,7 +47,7 @@ class SteamAPI:
             return {}
         
     def get_recently_played_games(self) -> Dict:
-        """ Get rencently played games from the user! """
+        """Get recently played games from the user"""
         
         url = f"{self.base_url}/IPlayerService/GetRecentlyPlayedGames/v0001/"
         params = {
@@ -57,7 +57,7 @@ class SteamAPI:
         }
         
         try:
-            response=request.get(url, params=params)
+            response = requests.get(url, params=params)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -66,10 +66,10 @@ class SteamAPI:
         
     def get_game_details(self, app_id: int) -> Dict:
         """Get detailed information about a specific game"""
-        url = f"{self.base_url}/api/appdetails"
+        url = f"{self.base_url}/ISteamApps/GetAppDetails/v0001/"
         params = {
             'appids': app_id,
-            'format': json
+            'format': 'json'
         }
         
         try: 
@@ -77,12 +77,12 @@ class SteamAPI:
             response.raise_for_status()
             data = response.json()
             return data.get(str(app_id), {}).get('data', {})
-        except request.RequestException as e:
+        except requests.RequestException as e:
             logging.error(f"Error fetching game details for {app_id}: {e}")
             return {}
     
     def get_game_achievements(self, app_id: int) -> Dict:
-        """Get game achievments for the player"""
+        """Get game achievements for the player"""
         url = f"{self.base_url}/ISteamUserStats/GetPlayerAchievements/v0001/"
         params = {
             'key': self.api_key,
@@ -102,7 +102,7 @@ class SteamAPI:
             return {}
         
     def game_get_schema(self, app_id: int) -> Dict:
-        """Get achievment schema for a game"""
+        """Get achievement schema for a game"""
         
         url = f"{self.base_url}/ISteamUserStats/GetSchemaForGame/v2/"
         params = {
@@ -135,6 +135,7 @@ class SteamAPI:
         except requests.RequestException as e:
             logging.error(f"Error fetching player stats: {e}")
             return {}
+
 class SessionTracker:
     """Track gaming sessions based on playtime changes"""
     
@@ -152,12 +153,12 @@ class SessionTracker:
             self.sessions = {}
             
     def save_sessions(self):
-        """Save sessison data to file"""
+        """Save session data to file"""
         try:
-            with open(session.session_file, 'r') as f:
-                self.sessions = json.load(f)
-        except FileNotFoundError:
-            self.sessions = {}
+            with open(self.session_file, 'w') as f:
+                json.dump(self.sessions, f, indent=2)
+        except Exception as e:
+            logging.error(f"Error saving sessions: {e}")
             
     def update_session_count(self, app_id: int, current_playtime: int, last_played: int) -> int:
         """Update session count based on playtime changes"""
@@ -170,7 +171,7 @@ class SessionTracker:
                 'last_played': last_played
             }
         else:
-            session_data = slf.sessions[app_id_str]
+            session_data = self.sessions[app_id_str]
             
             if current_playtime > session_data.get('last_playtime', 0):
                 last_session_time = session_data.get('last_played', 0)
@@ -181,10 +182,10 @@ class SessionTracker:
                 session_data['last_playtime'] = current_playtime
                 session_data['last_played'] = last_played
         self.save_sessions()
-        return self.sessons[app_id_str]['session_count']
+        return self.sessions[app_id_str]['session_count']
     
 class NotionAPI:
-    """Handle's Notion API interaction with enhanced properties"""
+    """Handle Notion API interaction with enhanced properties"""
     
     def __init__(self, token: str, database_id: str):
         self.token = token
@@ -198,19 +199,19 @@ class NotionAPI:
         self.base_url = "https://api.notion.com/v1"
     
     def calculate_average_rating(self, ratings: Dict[str, float]) -> float:
-        """Calculate average rating rom indivusal category ratings"""
+        """Calculate average rating from individual category ratings"""
         valid_ratings = [score for score in ratings.values() if score > 0]
         return round(sum(valid_ratings) / len(valid_ratings), 1) if valid_ratings else 0
     
     def create_game_entry(self, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> Optional[str]:
-        """Create a game entry in a notion database"""
+        """Create a game entry in a Notion database"""
         url = f"{self.base_url}/pages"
         
-        #Calculate hours played
+        # Calculate hours played
         playtime_minutes = game_data.get('playtime_forever', 0)
-        hours_played=round(playtime_minutes / 60, 2) if playtime_minutes > 0 else 0
+        hours_played = round(playtime_minutes / 60, 2) if playtime_minutes > 0 else 0
         
-        #Calculate cost per hour if price is avaliable
+        # Calculate cost per hour if price is available
         price = game_data.get('price_overview', {}).get('final', 0)/100 if game_data.get('price_overview') else 0
         cost_per_hour = round(price / hours_played, 2) if hours_played > 0 and price > 0 else 0
         
@@ -222,18 +223,15 @@ class NotionAPI:
         if game_data.get('release_date', {}).get('date'):
             try:
                 # Try to parse the release date
-                release_str = game_date['release_date']['date']
+                release_str = game_data['release_date']['date']
                 
                 for fmt in ['%b %d, %Y', '%b %Y', '%Y']:
                     try:
-                        parsed_date = datetime.strptime(released_str, fmt)
-                        released_date = parsed_date.isoformat()[:10]
-                        
+                        parsed_date = datetime.strptime(release_str, fmt)
+                        release_date = parsed_date.isoformat()[:10]
                         break
-                    
                     except ValueError:
                         continue
-                    
             except:
                 pass
         
@@ -265,21 +263,15 @@ class NotionAPI:
                 ]
             },
             "Achievement Completion": {"number": achievement_completion},
-            
-            # Rating categories (0-10)
             "Gameplay Rating": {"number": 0},
             "Story/Worldbuilding Rating": {"number": 0},
             "Graphics/Art Style Rating": {"number": 0},
             "Music/Sound Design Rating": {"number": 0},
             "Replayability Rating": {"number": 0},
             "Emotional Impact Rating": {"number": 0},
-            # Overall Rating will be calculated by Notion formula, not set here
-            
             "Notes": {"rich_text": []},
             "Status": {"select": {"name": "Owned"}},
             "Platform": {"multi_select": [{"name": "Steam"}]},
-            
-            # Game description
             "Description": {
                 "rich_text": [
                     {"text": {"content": game_data.get('short_description', '')[:2000]}}  # Notion has char limits
@@ -293,11 +285,11 @@ class NotionAPI:
         }
         
         try:
-            response = response.post(url, headers=self.headers, json=payload)
+            response = requests.post(url, headers=self.headers, json=payload)
             response.raise_for_status()
             logging.info(f"Created entry for: {game_data.get('name')}")
-            return response.json.get('id')
-        except request.RequestException as e:
+            return response.json().get('id')
+        except requests.RequestException as e:
             logging.error(f"Error creating Notion Entry for {game_data.get('name')}: {e}")
             if hasattr(e, "response"):
                 logging.error(f"Response: {e.response.text}")
@@ -415,6 +407,310 @@ class NotionAPI:
         
         Notion Formula for Overall Rating:
         round(if(prop("Gameplay Rating") > 0 or prop("Story/Worldbuilding Rating") > 0 or prop("Graphics/Art Style Rating") > 0 or prop("Music/Sound Design Rating") > 0 or prop("Replayability Rating") > 0 or prop("Emotional Impact Rating") > 0, (if(prop("Gameplay Rating") > 0, prop("Gameplay Rating"), 0) + if(prop("Story/Worldbuilding Rating") > 0, prop("Story/Worldbuilding Rating"), 0) + if(prop("Graphics/Art Style Rating") > 0, prop("Graphics/Art Style Rating"), 0) + if(prop("Music/Sound Design Rating") > 0, prop("Music/Sound Design Rating"), 0) + if(prop("Replayability Rating") > 0, prop("Replayability Rating"), 0) + if(prop("Emotional Impact Rating") > 0, prop("Emotional Impact Rating"), 0)) / (if(prop("Gameplay Rating") > 0, 1, 0) + if(prop("Story/Worldbuilding Rating") > 0, 1, 0) + if(prop("Graphics/Art Style Rating") > 0, 1, 0) + if(prop("Music/Sound Design Rating") > 0, 1, 0) + if(prop("Replayability Rating") > 0, 1, 0) + if(prop("Emotional Impact Rating") > 0, 1, 0)), 0), 1)
+        """
+        print(schema_info)
+        return True
+    
+class GameAnalyzer:
+    """Enhanced game analysis with session and rating data"""
+    
+    @staticmethod
+    def analyze_playtime_distribution(games: List[Dict]) -> Dict:
+        """Analyze playtime distribution across games"""
+        total_playtime = sum(game.get('playtime_forever', 0) for game in games)
+        total_hours = total_playtime / 60
+        
+        # Categorize games by playtime
+        categories = {
+            'unplayed': [],
+            'light_play': [],    # < 5 hours
+            'moderate_play': [], # 5-20 hours
+            'heavy_play': [],    # 20-100 hours
+            'excessive_play': [] # > 100 hours
+        }
+        
+        for game in games:
+            hours = game.get('playtime_forever', 0) / 60
+            name = game.get('name', 'Unknown')
+            
+            if hours == 0:
+                categories['unplayed'].append(name)
+            elif hours < 5:
+                categories['light_play'].append((name, round(hours, 1)))
+            elif hours < 20:
+                categories['moderate_play'].append((name, round(hours, 1)))
+            elif hours < 100:
+                categories['heavy_play'].append((name, round(hours, 1)))
+            else:
+                categories['excessive_play'].append((name, round(hours, 1)))
+        
+        return {
+            'total_hours': round(total_hours, 1),
+            'total_games': len(games),
+            'categories': categories,
+            'unplayed_percentage': round(len(categories['unplayed']) / len(games) * 100, 1) if len(games) > 0 else 0
+        }
+    
+    @staticmethod
+    def analyze_genres(games: List[Dict]) -> Dict:
+        """Analyze preferred genres"""
+        genre_stats = {}
+        
+        for game in games:
+            genres = game.get('genres', [])
+            playtime = game.get('playtime_forever', 0)
+            
+            for genre in genres:
+                genre_name = genre.get('description', 'Unknown')
+                if genre_name not in genre_stats:
+                    genre_stats[genre_name] = {
+                        'count': 0,
+                        'total_playtime': 0,
+                        'games': []
+                    }
+                
+                genre_stats[genre_name]['count'] += 1
+                genre_stats[genre_name]['total_playtime'] += playtime
+                genre_stats[genre_name]['games'].append(game.get('name', 'Unknown'))
+        
+        # Sort by total playtime
+        sorted_genres = sorted(
+            genre_stats.items(),
+            key=lambda x: x[1]['total_playtime'],
+            reverse=True
+        )
+        
+        return dict(sorted_genres)
+    
+    @staticmethod
+    def analyze_sessions(session_tracker: SessionTracker, games: List[Dict]) -> Dict:
+        """Analyze gaming sessions"""
+        session_stats = {
+            'total_sessions': 0,
+            'avg_sessions_per_game': 0,
+            'most_sessioned_games': [],
+            'session_efficiency': []  # Hours per session
+        }
+        
+        for game in games:
+            app_id = game.get('appid')
+            if str(app_id) in session_tracker.sessions:
+                session_count = session_tracker.sessions[str(app_id)]['session_count']
+                session_stats['total_sessions'] += session_count
+                
+                hours_played = game.get('playtime_forever', 0) / 60
+                if session_count > 0:
+                    hours_per_session = round(hours_played / session_count, 1)
+                    session_stats['session_efficiency'].append({
+                        'name': game.get('name', 'Unknown'),
+                        'sessions': session_count,
+                        'hours_per_session': hours_per_session
+                    })
+        
+        # Calculate averages
+        total_games_with_sessions = len([g for g in games if str(g.get('appid', 0)) in session_tracker.sessions])
+        if total_games_with_sessions > 0:
+            session_stats['avg_sessions_per_game'] = round(
+                session_stats['total_sessions'] / total_games_with_sessions, 1
+            )
+        
+        # Sort by session count
+        session_stats['session_efficiency'].sort(key=lambda x: x['sessions'], reverse=True)
+        session_stats['most_sessioned_games'] = session_stats['session_efficiency'][:10]
+        
+        return session_stats
+
+class GamingTracker:
+    """Enhanced main application class"""
+    
+    def __init__(self, steam_api_key: str, steam_id: str, notion_token: str, notion_database_id: str):
+        self.steam_api = SteamAPI(steam_api_key, steam_id)
+        self.notion_api = NotionAPI(notion_token, notion_database_id)
+        self.analyzer = GameAnalyzer()
+        self.session_tracker = SessionTracker()
+    
+    def calculate_achievement_completion(self, app_id: int) -> float:
+        """Calculate achievement completion percentage"""
+        try:
+            achievements_data = self.steam_api.get_game_achievements(app_id)
+            if not achievements_data.get('playerstats', {}).get('achievements'):
+                return 0
+            
+            achievements = achievements_data['playerstats']['achievements']
+            if not achievements:
+                return 0
+            
+            completed = sum(1 for ach in achievements if ach.get('achieved') == 1)
+            total = len(achievements)
+            
+            return round((completed / total) * 100, 1) if total > 0 else 0
+            
+        except Exception as e:
+            logging.debug(f"Could not calculate achievements for {app_id}: {e}")
+            return 0
+    
+    def sync_games_to_notion(self, update_existing: bool = True, include_-Limit to 5 genres
+            ]
+            },
+            "Price": {"number": price},
+            "Cost Per Hour": {"number": cost_per_hour},
+            "Release Date": {"date": {"start": release_date} if release_date else None},
+            "Purchase Date": {"date": None},  # To be filled manually
+            "Developer": {
+                "rich_text": [
+                    {"text": {"content": ', '.join(game_data.get('developers', []))}}
+                ]
+            },
+            "Publisher": {
+                "rich_text": [
+                    {"text": {"content": ', '.join(game_data.get('publishers', []))}}
+                ]
+            },
+            "Achievement Completion": {"number": achievement_completion},
+            "Gameplay Rating": {"number": 0},
+            "Story/Worldbuilding Rating": {"number": 0},
+            "Graphics/Art Style Rating": {"number": 0},
+            "Music/Sound Design Rating": {"number": 0},
+            "Replayability Rating": {"number": 0},
+            "Emotional Impact Rating": {"number": 0},
+            "Notes": {"rich_text": []},
+            "Status": {"select": {"name": "Owned"}},
+            "Platform": {"multi_select": [{"name": "Steam"}]},
+            "Description": {
+                "rich_text": [
+                    {"text": {"content": game_data.get('short_description', '')[:2000]}}  # Notion has char limits
+                ]
+            }
+        }
+
+        payload = {
+            "parent": {"database_id": self.database_id},
+            "properties": properties
+        }
+        
+        try:
+            response = requests.post(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            logging.info(f"Created entry for: {game_data.get('name')}")
+            return response.json().get('id')
+        except requests.RequestException as e:
+            logging.error(f"Error creating Notion Entry for {game_data.get('name')}: {e}")
+            if hasattr(e, "response"):
+                logging.error(f"Response: {e.response.text}")
+            return None
+        
+    def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> bool:
+        """Update an existing game entry"""
+        url = f"{self.base_url}/pages/{page_id}"
+        
+        playtime_minutes = game_data.get('playtime_forever', 0)
+        hours_played = round(playtime_minutes / 60, 1) if playtime_minutes > 0 else 0
+        
+        # Calculate cost per hour
+        price = game_data.get('price_overview', {}).get('final', 0) / 100 if game_data.get('price_overview') else 0
+        cost_per_hour = round(price / hours_played, 2) if hours_played > 0 and price > 0 else 0
+        
+        last_played_date = None
+        if game_data.get('rtime_last_played'):
+            last_played_date = datetime.fromtimestamp(game_data.get('rtime_last_played')).isoformat()
+        
+        properties = {
+            "Hours Played": {"number": hours_played},
+            "Session Count": {"number": session_count},
+            "Last Played": {"date": {"start": last_played_date} if last_played_date else None},
+            "Most Recent Session": {"date": {"start": last_played_date} if last_played_date else None},
+            "Cost Per Hour": {"number": cost_per_hour},
+            "Achievement Completion": {"number": achievement_completion}
+        }
+        
+        payload = {"properties": properties}
+        
+        try:
+            response = requests.patch(url, headers=self.headers, json=payload)
+            response.raise_for_status()
+            logging.info(f"Updated entry for: {game_data.get('name')}")
+            return True
+        except requests.RequestException as e:
+            logging.error(f"Error updating Notion entry: {e}")
+            return False
+    
+    def get_existing_games(self) -> Dict[int, str]:
+        """Get existing games from Notion database"""
+        url = f"{self.base_url}/databases/{self.database_id}/query"
+        
+        existing_games = {}
+        has_more = True
+        start_cursor = None
+        
+        while has_more:
+            payload = {"page_size": 100}
+            if start_cursor:
+                payload["start_cursor"] = start_cursor
+            
+            try:
+                response = requests.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                
+                for page in data.get('results', []):
+                    app_id_prop = page.get('properties', {}).get('App ID', {})
+                    if app_id_prop.get('number'):
+                        existing_games[app_id_prop['number']] = page['id']
+                
+                has_more = data.get('has_more', False)
+                start_cursor = data.get('next_cursor')
+                
+            except requests.RequestException as e:
+                logging.error(f"Error fetching existing games: {e}")
+                break
+        
+        return existing_games
+    
+    def create_database_schema(self) -> bool:
+        """Display the enhanced database schema"""
+        schema_info = """
+        Enhanced Notion Database Schema for Gaming Tracker:
+        
+        Properties to create in your Notion database:
+        
+        BASIC INFO:
+        1. Game Name (Title)
+        2. App ID (Number)
+        3. Hours Played (Number)
+        4. Session Count (Number) - NEW
+        5. Last Played (Date)
+        6. Most Recent Session (Date) - NEW
+        7. Purchase Date (Date) - NEW (Manual input)
+        
+        GAME DETAILS:
+        8. Genres (Multi-select)
+        9. Price (Number)
+        10. Cost Per Hour (Number)
+        11. Release Date (Date)
+        12. Developer (Text)
+        13. Publisher (Text)
+        14. Description (Text) - NEW
+        15. Achievement Completion (Number) - NEW (0-100%)
+        
+        RATING SYSTEM (All 0-10):
+        16. Gameplay Rating (Number) - NEW
+        17. Story/Worldbuilding Rating (Number) - NEW
+        18. Graphics/Art Style Rating (Number) - NEW
+        19. Music/Sound Design Rating (Number) - NEW
+        20. Replayability Rating (Number) - NEW
+        21. Emotional Impact Rating (Number) - NEW
+        22. Overall Rating (Formula) - NEW (Use Notion formula for average)
+        
+        STATUS & NOTES:
+        23. Notes (Text)
+        24. Status (Select: Owned, Completed, Playing, Wishlist, Dropped, On Hold)
+        25. Platform (Multi-select: Steam, Epic, GOG, etc.)
+        
+        IMPORTANT: Use Notion's native Formula property for Overall Rating instead of letting Python calculate it.
+        This allows for real-time updates when you manually change individual ratings.
+        
+        Notion Formula for Overall Rating:
+        round(if(prop("Gameplay Rating") > 0 or prop("Story/Worldbuilding Rating") > 0 or prop("Graphics/Art Style Rating") > 0 or prop("Music/Sound Design Rating") > 0 or prop("Replayability Rating") > 0 or prop("Emotional Impact Rating") > 0, (if(prop("Gameplay Rating") > 0, prop("Gameplay Rating"), 0) + if(prop("Story/Worldbuilding Rating") > 0, prop("Story/Worldbuilding Rating"), 0) + if(prop("Graphics/Art Style Rating") > 0, prop("Graphics/Art Style Rating"), 0) + if(prop("Music/Sound Design Rating") > 0, prop("Music/Sound Design Rating"), 0) + if(prop("Replayability Rating") > 0, prop("Replayability Rating"), 0) + if(prop(" Emotional Impact Rating") > 0, prop("Emotional Impact Rating"), 0)) / (if(prop("Gameplay Rating") > 0, 1, 0) + if(prop("Story/Worldbuilding Rating") > 0, 1, 0) + if(prop("Graphics/Art Style Rating") > 0, 1, 0) + if(prop("Music/Sound Design Rating") > 0, 1, 0) + if(prop("Replayability Rating") > 0, 1, 0) + if(prop("Emotional Impact Rating") > 0, 1, 0)), 0), 1)
         """
         print(schema_info)
         return True
@@ -833,5 +1129,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-        
