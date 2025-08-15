@@ -549,172 +549,82 @@ class GamingTracker:
             logging.debug(f"Could not calculate achievements for {app_id}: {e}")
             return 0
     
-    def sync_games_to_notion(self, update_existing: bool = True, include_-Limit to 5 genres
-            ]
-            },
-            "Price": {"number": price},
-            "Cost Per Hour": {"number": cost_per_hour},
-            "Release Date": {"date": {"start": release_date} if release_date else None},
-            "Purchase Date": {"date": None},  # To be filled manually
-            "Developer": {
-                "rich_text": [
-                    {"text": {"content": ', '.join(game_data.get('developers', []))}}
-                ]
-            },
-            "Publisher": {
-                "rich_text": [
-                    {"text": {"content": ', '.join(game_data.get('publishers', []))}}
-                ]
-            },
-            "Achievement Completion": {"number": achievement_completion},
-            "Gameplay Rating": {"number": 0},
-            "Story/Worldbuilding Rating": {"number": 0},
-            "Graphics/Art Style Rating": {"number": 0},
-            "Music/Sound Design Rating": {"number": 0},
-            "Replayability Rating": {"number": 0},
-            "Emotional Impact Rating": {"number": 0},
-            "Notes": {"rich_text": []},
-            "Status": {"select": {"name": "Owned"}},
-            "Platform": {"multi_select": [{"name": "Steam"}]},
-            "Description": {
-                "rich_text": [
-                    {"text": {"content": game_data.get('short_description', '')[:2000]}}  # Notion has char limits
-                ]
-            }
-        }
-
-        payload = {
-            "parent": {"database_id": self.database_id},
-            "properties": properties
-        }
+   def sync_games_to_notion(self, update_existing: bool = True, include_achievements: bool = True) -> Dict:
+        """Enhanced sync with session tracking and achievements"""
+        logging.info("Starting enhanced game sync to Notion...")
         
-        try:
-            response = requests.post(url, headers=self.headers, json=payload)
-            response.raise_for_status()
-            logging.info(f"Created entry for: {game_data.get('name')}")
-            return response.json().get('id')
-        except requests.RequestException as e:
-            logging.error(f"Error creating Notion Entry for {game_data.get('name')}: {e}")
-            if hasattr(e, "response"):
-                logging.error(f"Response: {e.response.text}")
-            return None
+        # Get games from Steam
+        owned_games_data = self.steam_api.get_owned_games()
+        games = owned_games_data.get('response', {}).get('games', [])
         
-    def update_game_entry(self, page_id: str, game_data: Dict, session_count: int = 0, achievement_completion: float = 0) -> bool:
-        """Update an existing game entry"""
-        url = f"{self.base_url}/pages/{page_id}"
+        if not games:
+            logging.warning("No games found in Steam library")
+            return {'synced': 0, 'updated': 0, 'errors': 0}
         
-        playtime_minutes = game_data.get('playtime_forever', 0)
-        hours_played = round(playtime_minutes / 60, 1) if playtime_minutes > 0 else 0
+        # Get existing games from Notion
+        existing_games = self.notion_api.get_existing_games() if update_existing else {}
         
-        # Calculate cost per hour
-        price = game_data.get('price_overview', {}).get('final', 0) / 100 if game_data.get('price_overview') else 0
-        cost_per_hour = round(price / hours_played, 2) if hours_played > 0 and price > 0 else 0
+        synced = updated = errors = 0
         
-        last_played_date = None
-        if game_data.get('rtime_last_played'):
-            last_played_date = datetime.fromtimestamp(game_data.get('rtime_last_played')).isoformat()
-        
-        properties = {
-            "Hours Played": {"number": hours_played},
-            "Session Count": {"number": session_count},
-            "Last Played": {"date": {"start": last_played_date} if last_played_date else None},
-            "Most Recent Session": {"date": {"start": last_played_date} if last_played_date else None},
-            "Cost Per Hour": {"number": cost_per_hour},
-            "Achievement Completion": {"number": achievement_completion}
-        }
-        
-        payload = {"properties": properties}
-        
-        try:
-            response = requests.patch(url, headers=self.headers, json=payload)
-            response.raise_for_status()
-            logging.info(f"Updated entry for: {game_data.get('name')}")
-            return True
-        except requests.RequestException as e:
-            logging.error(f"Error updating Notion entry: {e}")
-            return False
-    
-    def get_existing_games(self) -> Dict[int, str]:
-        """Get existing games from Notion database"""
-        url = f"{self.base_url}/databases/{self.database_id}/query"
-        
-        existing_games = {}
-        has_more = True
-        start_cursor = None
-        
-        while has_more:
-            payload = {"page_size": 100}
-            if start_cursor:
-                payload["start_cursor"] = start_cursor
+        for i, game in enumerate(games):
+            app_id = game.get('appid')
             
             try:
-                response = requests.post(url, headers=self.headers, json=payload)
-                response.raise_for_status()
-                data = response.json()
+                # Get detailed game information
+                game_details = self.steam_api.get_game_details(app_id)
                 
-                for page in data.get('results', []):
-                    app_id_prop = page.get('properties', {}).get('App ID', {})
-                    if app_id_prop.get('number'):
-                        existing_games[app_id_prop['number']] = page['id']
+                # Calculate session count
+                session_count = self.session_tracker.update_session_count(
+                    app_id,
+                    game.get('playtime_forever', 0),
+                    game.get('rtime_last_played', 0)
+                )
                 
-                has_more = data.get('has_more', False)
-                start_cursor = data.get('next_cursor')
+                # Calculate achievement completion
+                achievement_completion = 0
+                if include_achievements:
+                    achievement_completion = self.calculate_achievement_completion(app_id)
                 
-            except requests.RequestException as e:
-                logging.error(f"Error fetching existing games: {e}")
-                break
+                # Merge basic info with detailed info
+                full_game_data = {**game, **game_details}
+                
+                if app_id in existing_games and update_existing:
+                    # Update existing entry
+                    if self.notion_api.update_game_entry(
+                        existing_games[app_id], 
+                        full_game_data, 
+                        session_count,
+                        achievement_completion
+                    ):
+                        updated += 1
+                    else:
+                        errors += 1
+                elif app_id not in existing_games:
+                    # Create new entry
+                    if self.notion_api.create_game_entry(
+                        full_game_data, 
+                        session_count,
+                        achievement_completion
+                    ):
+                        synced += 1
+                    else:
+                        errors += 1
+                
+                # Progress logging
+                if (i + 1) % 10 == 0:
+                    logging.info(f"Processed {i + 1}/{len(games)} games")
+                
+                # Rate limiting to avoid hitting API limits
+                time.sleep(1)  # Increased delay for stability
+                
+            except Exception as e:
+                logging.error(f"Error processing game {game.get('name')}: {e}")
+                errors += 1
         
-        return existing_games
-    
-    def create_database_schema(self) -> bool:
-        """Display the enhanced database schema"""
-        schema_info = """
-        Enhanced Notion Database Schema for Gaming Tracker:
-        
-        Properties to create in your Notion database:
-        
-        BASIC INFO:
-        1. Game Name (Title)
-        2. App ID (Number)
-        3. Hours Played (Number)
-        4. Session Count (Number) - NEW
-        5. Last Played (Date)
-        6. Most Recent Session (Date) - NEW
-        7. Purchase Date (Date) - NEW (Manual input)
-        
-        GAME DETAILS:
-        8. Genres (Multi-select)
-        9. Price (Number)
-        10. Cost Per Hour (Number)
-        11. Release Date (Date)
-        12. Developer (Text)
-        13. Publisher (Text)
-        14. Description (Text) - NEW
-        15. Achievement Completion (Number) - NEW (0-100%)
-        
-        RATING SYSTEM (All 0-10):
-        16. Gameplay Rating (Number) - NEW
-        17. Story/Worldbuilding Rating (Number) - NEW
-        18. Graphics/Art Style Rating (Number) - NEW
-        19. Music/Sound Design Rating (Number) - NEW
-        20. Replayability Rating (Number) - NEW
-        21. Emotional Impact Rating (Number) - NEW
-        22. Overall Rating (Formula) - NEW (Use Notion formula for average)
-        
-        STATUS & NOTES:
-        23. Notes (Text)
-        24. Status (Select: Owned, Completed, Playing, Wishlist, Dropped, On Hold)
-        25. Platform (Multi-select: Steam, Epic, GOG, etc.)
-        
-        IMPORTANT: Use Notion's native Formula property for Overall Rating instead of letting Python calculate it.
-        This allows for real-time updates when you manually change individual ratings.
-        
-        Notion Formula for Overall Rating:
-        round(if(prop("Gameplay Rating") > 0 or prop("Story/Worldbuilding Rating") > 0 or prop("Graphics/Art Style Rating") > 0 or prop("Music/Sound Design Rating") > 0 or prop("Replayability Rating") > 0 or prop("Emotional Impact Rating") > 0, (if(prop("Gameplay Rating") > 0, prop("Gameplay Rating"), 0) + if(prop("Story/Worldbuilding Rating") > 0, prop("Story/Worldbuilding Rating"), 0) + if(prop("Graphics/Art Style Rating") > 0, prop("Graphics/Art Style Rating"), 0) + if(prop("Music/Sound Design Rating") > 0, prop("Music/Sound Design Rating"), 0) + if(prop("Replayability Rating") > 0, prop("Replayability Rating"), 0) + if(prop(" Emotional Impact Rating") > 0, prop("Emotional Impact Rating"), 0)) / (if(prop("Gameplay Rating") > 0, 1, 0) + if(prop("Story/Worldbuilding Rating") > 0, 1, 0) + if(prop("Graphics/Art Style Rating") > 0, 1, 0) + if(prop("Music/Sound Design Rating") > 0, 1, 0) + if(prop("Replayability Rating") > 0, 1, 0) + if(prop("Emotional Impact Rating") > 0, 1, 0)), 0), 1)
-        """
-        print(schema_info)
-        return True
-    
+        results = {'synced': synced, 'updated': updated, 'errors': errors}
+        logging.info(f"Enhanced sync completed: {results}")
+        return results
+
 class GameAnalyzer:
     """Enhanced game analysis with session and rating data"""
     
