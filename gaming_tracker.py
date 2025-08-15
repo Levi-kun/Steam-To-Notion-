@@ -1,12 +1,13 @@
-import os 
+import os
 import time
 import json
 import requests
-import datetime import datetime, timedelta
-import typing import Dict, List, Optional, Any
-
 import logging
-import collections import defaultdict
+
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any
+from collections import defaultdict
+
 
 logging.basicConfig(
     level = logging.INFO, 

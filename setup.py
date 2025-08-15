@@ -6,7 +6,8 @@ Setup script for Steam-Notion Gaming Tracker (index.py)
 
 import os
 import requests
-import datetime import datetime
+
+from datetime import datetime
 
 def test_steam_api(api_key, steam_id):
     print("Testing Steam API Connection")
