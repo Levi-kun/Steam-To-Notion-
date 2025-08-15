@@ -21,7 +21,7 @@ logging.basicConfig(
 class SteamAPI:
     """Handle Steam Web API Interactions"""
     
-    def __init__(self, api_key: str, steam_id str):
+    def __init__(self, api_key: str, steam_id: str):
         self.api_key = api_key
         self.steam_id = steam_id
         self.base_url = "http://api.steampowered.com"
