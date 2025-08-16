@@ -1,11 +1,25 @@
 import asyncio
 import aiohttp
 import json
+import os
+import sys
+import argparse
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 import time
 import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('gaming_tracker.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 @dataclass
 class GameData:
@@ -36,32 +50,66 @@ class BatchGameProcessor:
     
     async def create_sessions(self):
         """Initialize async HTTP sessions with proper headers"""
-        # Steam session
-        steam_connector = aiohttp.TCPConnector(limit=25, limit_per_host=25)
-        self.steam_session = aiohttp.ClientSession(
-            connector=steam_connector,
-            timeout=aiohttp.ClientTimeout(total=30)
-        )
-        
-        # Notion session with auth headers
-        notion_headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-        }
-        notion_connector = aiohttp.TCPConnector(limit=15, limit_per_host=15)
-        self.notion_session = aiohttp.ClientSession(
-            headers=notion_headers,
-            connector=notion_connector,
-            timeout=aiohttp.ClientTimeout(total=30)
-        )
+        try:
+            # Steam session
+            steam_connector = aiohttp.TCPConnector(limit=25, limit_per_host=25)
+            self.steam_session = aiohttp.ClientSession(
+                connector=steam_connector,
+                timeout=aiohttp.ClientTimeout(total=30)
+            )
+            
+            # Notion session with auth headers
+            notion_headers = {
+                "Authorization": f"Bearer {self.notion_token}",
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28"
+            }
+            notion_connector = aiohttp.TCPConnector(limit=15, limit_per_host=15)
+            self.notion_session = aiohttp.ClientSession(
+                headers=notion_headers,
+                connector=notion_connector,
+                timeout=aiohttp.ClientTimeout(total=30)
+            )
+            logger.info("HTTP sessions initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to create sessions: {e}")
+            raise
     
     async def close_sessions(self):
         """Properly close async sessions"""
-        if self.steam_session:
-            await self.steam_session.close()
-        if self.notion_session:
-            await self.notion_session.close()
+        try:
+            if self.steam_session:
+                await self.steam_session.close()
+            if self.notion_session:
+                await self.notion_session.close()
+            logger.info("HTTP sessions closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing sessions: {e}")
+    
+    async def fetch_owned_games(self) -> List[Dict]:
+        """Fetch user's owned games from Steam API"""
+        url = "http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
+        params = {
+            'key': self.steam_api_key,
+            'steamid': self.steam_id,
+            'format': 'json',
+            'include_appinfo': True,
+            'include_played_free_games': True
+        }
+        
+        try:
+            async with self.steam_session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    games = data.get('response', {}).get('games', [])
+                    logger.info(f"Retrieved {len(games)} owned games from Steam")
+                    return games
+                else:
+                    logger.error(f"Steam API returned status {response.status}")
+                    return []
+        except Exception as e:
+            logger.error(f"Error fetching owned games: {e}")
+            return []
     
     async def fetch_game_details_batch(self, app_ids: List[int]) -> Dict[int, Dict]:
         """Fetch game details for multiple games concurrently"""
@@ -74,13 +122,18 @@ class BatchGameProcessor:
                     async with self.steam_session.get(url, params=params) as response:
                         if response.status == 200:
                             data = await response.json()
-                            return app_id, data.get(str(app_id), {}).get('data', {})
+                            game_data = data.get(str(app_id), {})
+                            if game_data.get('success', False):
+                                return app_id, game_data.get('data', {})
+                            else:
+                                logger.debug(f"Steam API returned unsuccessful response for app {app_id}")
+                                return app_id, {}
                         elif response.status == 429:  # Rate limited
                             await asyncio.sleep(2 ** attempt)  # Exponential backoff
                         else:
-                            logging.warning(f"Steam API returned {response.status} for app {app_id}")
+                            logger.warning(f"Steam API returned {response.status} for app {app_id}")
                 except Exception as e:
-                    logging.error(f"Error fetching details for {app_id}: {e}")
+                    logger.error(f"Error fetching details for {app_id}: {e}")
                     if attempt < self.MAX_RETRIES - 1:
                         await asyncio.sleep(1)
             
@@ -97,7 +150,7 @@ class BatchGameProcessor:
                 app_id, details = result
                 game_details[app_id] = details
             else:
-                logging.error(f"Batch request failed: {result}")
+                logger.error(f"Batch request failed: {result}")
         
         return game_details
     
@@ -116,15 +169,17 @@ class BatchGameProcessor:
                 async with self.steam_session.get(url, params=params) as response:
                     if response.status == 200:
                         data = await response.json()
-                        achievements = data.get('playerstats', {}).get('achievements', [])
-                        if achievements:
-                            completed = sum(1 for ach in achievements if ach.get('achieved') == 1)
-                            return app_id, round((completed / len(achievements)) * 100, 1)
+                        playerstats = data.get('playerstats', {})
+                        if playerstats.get('success', False):
+                            achievements = playerstats.get('achievements', [])
+                            if achievements:
+                                completed = sum(1 for ach in achievements if ach.get('achieved') == 1)
+                                return app_id, round((completed / len(achievements)) * 100, 1)
                     elif response.status == 403:
                         # Private stats or no achievements
-                        pass
+                        logger.debug(f"Achievement data not accessible for app {app_id}")
             except Exception as e:
-                logging.debug(f"Achievement fetch failed for {app_id}: {e}")
+                logger.debug(f"Achievement fetch failed for {app_id}: {e}")
             
             return app_id, 0
         
@@ -136,6 +191,8 @@ class BatchGameProcessor:
             if isinstance(result, tuple):
                 app_id, completion = result
                 achievements[app_id] = completion
+            elif not isinstance(result, Exception):
+                logger.error(f"Unexpected achievement result: {result}")
         
         return achievements
     
@@ -144,9 +201,11 @@ class BatchGameProcessor:
         # Filter valid games first to avoid unnecessary API calls
         valid_app_ids = []
         for game in games:
-            # Basic validation - skip obvious non-games
-            if game.get('playtime_forever', 0) > 0 or 'name' in game:
-                valid_app_ids.append(game.get('appid'))
+            app_id = game.get('appid')
+            if app_id and (game.get('playtime_forever', 0) > 0 or game.get('name')):
+                valid_app_ids.append(app_id)
+        
+        logger.info(f"Filtered to {len(valid_app_ids)} valid games for processing")
         
         # Create batches
         batches = []
@@ -158,15 +217,24 @@ class BatchGameProcessor:
     
     async def batch_sync_games_to_notion(self, games: List[Dict], include_achievements: bool = True) -> Dict:
         """Optimized batch sync with concurrent API calls and batch Notion updates"""
-        logging.info(f"Starting optimized batch sync for {len(games)} games...")
+        logger.info(f"Starting optimized batch sync for {len(games)} games...")
         start_time = time.time()
+        
+        if not games:
+            logger.warning("No games provided for processing")
+            return {
+                'total_processed': 0,
+                'notion_results': {'created': 0, 'updated': 0, 'errors': 0},
+                'processing_time': 0,
+                'performance_games_per_sec': 0.0
+            }
         
         # Initialize sessions
         await self.create_sessions()
         
         try:
             # Phase 1: Batch fetch all Steam data
-            logging.info("Phase 1: Fetching Steam data in batches...")
+            logger.info("Phase 1: Fetching Steam data in batches...")
             app_id_to_game = {game.get('appid'): game for game in games}
             batches = self.process_game_batches(games)
             
@@ -175,7 +243,7 @@ class BatchGameProcessor:
             
             # Process each batch
             for i, batch in enumerate(batches):
-                logging.info(f"Processing batch {i+1}/{len(batches)} ({len(batch)} games)")
+                logger.info(f"Processing batch {i+1}/{len(batches)} ({len(batch)} games)")
                 
                 # Concurrent fetch for this batch
                 batch_tasks = [
@@ -197,7 +265,7 @@ class BatchGameProcessor:
                     await asyncio.sleep(1)
             
             # Phase 2: Process and validate game data
-            logging.info("Phase 2: Processing and validating game data...")
+            logger.info("Phase 2: Processing and validating game data...")
             processed_games = []
             
             for app_id, game_details in all_game_details.items():
@@ -215,20 +283,25 @@ class BatchGameProcessor:
                 )
                 processed_games.append(game_data)
             
+            logger.info(f"Validated {len(processed_games)} games for Notion sync")
+            
             # Phase 3: Batch update Notion
-            logging.info("Phase 3: Batch updating Notion database...")
+            logger.info("Phase 3: Batch updating Notion database...")
             notion_results = await self.batch_update_notion(processed_games)
             
             # Calculate performance metrics
             total_time = time.time() - start_time
-            logging.info(f"Optimized sync completed in {total_time:.2f}s")
-            logging.info(f"Performance: {len(games)/total_time:.2f} games/second")
+            games_per_sec = len(processed_games) / total_time if total_time > 0 else 0
+            
+            logger.info(f"Optimized sync completed in {total_time:.2f}s")
+            logger.info(f"Performance: {games_per_sec:.2f} games/second")
+            logger.info(f"Notion results: {notion_results}")
             
             return {
                 'total_processed': len(processed_games),
                 'notion_results': notion_results,
                 'processing_time': total_time,
-                'performance_games_per_sec': round(len(games)/total_time, 2)
+                'performance_games_per_sec': round(games_per_sec, 2)
             }
         
         finally:
@@ -250,8 +323,45 @@ class BatchGameProcessor:
         
         return not genre_names.issubset(non_game_genres)
     
+    async def get_existing_games_async(self) -> Dict[int, str]:
+        """Asynchronously fetch existing games from Notion"""
+        url = f"https://api.notion.com/v1/databases/{self.notion_database_id}/query"
+        existing_games = {}
+        has_more = True
+        start_cursor = None
+        
+        try:
+            while has_more:
+                payload = {"page_size": 100}
+                if start_cursor:
+                    payload["start_cursor"] = start_cursor
+                
+                async with self.notion_session.post(url, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        for page in data.get('results', []):
+                            properties = page.get('properties', {})
+                            app_id_prop = properties.get('App ID', {})
+                            if app_id_prop.get('type') == 'number' and app_id_prop.get('number'):
+                                existing_games[int(app_id_prop['number'])] = page['id']
+                        
+                        has_more = data.get('has_more', False)
+                        start_cursor = data.get('next_cursor')
+                    else:
+                        logger.error(f"Notion API returned status {response.status}")
+                        break
+                        
+        except Exception as e:
+            logger.error(f"Error fetching existing games: {e}")
+        
+        logger.info(f"Found {len(existing_games)} existing games in Notion")
+        return existing_games
+    
     async def batch_update_notion(self, game_data_list: List[GameData]) -> Dict:
         """Batch update Notion database with concurrent requests"""
+        if not game_data_list:
+            return {'created': 0, 'updated': 0, 'errors': 0}
+        
         # First, get existing games to determine create vs update
         existing_games = await self.get_existing_games_async()
         
@@ -266,6 +376,8 @@ class BatchGameProcessor:
                 update_batches.append((existing_games[app_id], game_data))
             else:
                 create_batches.append(game_data)
+        
+        logger.info(f"Will create {len(create_batches)} and update {len(update_batches)} entries")
         
         # Process in batches
         created = updated = errors = 0
@@ -296,45 +408,28 @@ class BatchGameProcessor:
             'errors': errors
         }
     
-    async def get_existing_games_async(self) -> Dict[int, str]:
-        """Asynchronously fetch existing games from Notion"""
-        url = f"https://api.notion.com/v1/databases/{self.notion_database_id}/query"
-        existing_games = {}
-        
-        # Implementation would handle pagination and async fetching
-        # This is a simplified version
-        payload = {"page_size": 100}
-        
-        try:
-            async with self.notion_session.post(url, json=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    for page in data.get('results', []):
-                        app_id_prop = page.get('properties', {}).get('App ID', {})
-                        if app_id_prop.get('number'):
-                            existing_games[app_id_prop['number']] = page['id']
-        except Exception as e:
-            logging.error(f"Error fetching existing games: {e}")
-        
-        return existing_games
-    
     async def create_notion_entries_batch(self, game_data_list: List[GameData]) -> Dict:
         """Create multiple Notion entries concurrently"""
         async def create_single_entry(game_data: GameData) -> bool:
             url = "https://api.notion.com/v1/pages"
             
-            # Build properties (similar to original but optimized)
-            properties = self.build_notion_properties(game_data)
-            payload = {
-                "parent": {"database_id": self.notion_database_id},
-                "properties": properties
-            }
-            
             try:
+                # Build properties
+                properties = self.build_notion_properties(game_data)
+                payload = {
+                    "parent": {"database_id": self.notion_database_id},
+                    "properties": properties
+                }
+                
                 async with self.notion_session.post(url, json=payload) as response:
-                    return response.status == 200
+                    if response.status == 200:
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Failed to create entry for {game_data.basic_info.get('appid')}: {response.status} - {error_text}")
+                        return False
             except Exception as e:
-                logging.error(f"Error creating Notion entry: {e}")
+                logger.error(f"Error creating Notion entry: {e}")
                 return False
         
         tasks = [create_single_entry(game_data) for game_data in game_data_list]
@@ -350,15 +445,20 @@ class BatchGameProcessor:
         async def update_single_entry(page_id: str, game_data: GameData) -> bool:
             url = f"https://api.notion.com/v1/pages/{page_id}"
             
-            # Build update properties
-            properties = self.build_notion_update_properties(game_data)
-            payload = {"properties": properties}
-            
             try:
+                # Build update properties
+                properties = self.build_notion_update_properties(game_data)
+                payload = {"properties": properties}
+                
                 async with self.notion_session.patch(url, json=payload) as response:
-                    return response.status == 200
+                    if response.status == 200:
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Failed to update entry {page_id}: {response.status} - {error_text}")
+                        return False
             except Exception as e:
-                logging.error(f"Error updating Notion entry: {e}")
+                logger.error(f"Error updating Notion entry: {e}")
                 return False
         
         tasks = [update_single_entry(page_id, game_data) for page_id, game_data in update_data]
@@ -378,7 +478,8 @@ class BatchGameProcessor:
         playtime_minutes = game.get('playtime_forever', 0)
         hours_played = round(playtime_minutes / 60, 1) if playtime_minutes > 0 else 0
         
-        price = details.get('price_overview', {}).get('final', 0) / 100 if details.get('price_overview') else 0
+        price_overview = details.get('price_overview', {})
+        price = price_overview.get('final', 0) / 100 if price_overview else 0
         cost_per_hour = round(price / hours_played, 2) if hours_played > 0 and price > 0 else 0
         
         # Format dates
@@ -386,29 +487,41 @@ class BatchGameProcessor:
         if game.get('rtime_last_played'):
             last_played_date = time.strftime('%Y-%m-%d', time.localtime(game.get('rtime_last_played')))
         
-        return {
-            "Game Name": {"title": [{"text": {"content": details.get('name', 'Unknown')}}]},
+        # Build properties safely
+        properties = {
+            "Game Name": {"title": [{"text": {"content": details.get('name', 'Unknown Game')}}]},
             "App ID": {"number": game.get('appid', 0)},
             "Hours Played": {"number": hours_played},
             "Session Count": {"number": game_data.session_count},
             "Achievement Completion": {"number": game_data.achievement_completion},
-            "Last Played": {"date": {"start": last_played_date} if last_played_date else None},
-            "Genres": {
-                "multi_select": [
-                    {"name": genre.get('description', '')} 
-                    for genre in details.get('genres', [])[:5]
-                ]
-            },
-            "Price": {"number": price},
-            "Cost Per Hour": {"number": cost_per_hour},
-            "Developer": {
-                "rich_text": [
-                    {"text": {"content": ', '.join(details.get('developers', []))}}
-                ]
-            },
             "Status": {"select": {"name": "Owned"}},
             "Platform": {"multi_select": [{"name": "Steam"}]},
         }
+        
+        # Add optional properties
+        if last_played_date:
+            properties["Last Played"] = {"date": {"start": last_played_date}}
+        
+        if details.get('genres'):
+            properties["Genres"] = {
+                "multi_select": [
+                    {"name": genre.get('description', '')} 
+                    for genre in details.get('genres', [])[:5] if genre.get('description')
+                ]
+            }
+        
+        if price > 0:
+            properties["Price"] = {"number": price}
+            properties["Cost Per Hour"] = {"number": cost_per_hour}
+        
+        if details.get('developers'):
+            properties["Developer"] = {
+                "rich_text": [
+                    {"text": {"content": ', '.join(details.get('developers', []))[:2000]}}
+                ]
+            }
+        
+        return properties
     
     def build_notion_update_properties(self, game_data: GameData) -> Dict:
         """Build properties for updating existing entries"""
@@ -422,31 +535,72 @@ class BatchGameProcessor:
             "Achievement Completion": {"number": game_data.achievement_completion}
         }
 
-# Usage example
 async def main():
-    """Optimized main function using async batch processing"""
+    """Main execution function with proper async context"""
+    parser = argparse.ArgumentParser(description='Steam to Notion Gaming Tracker')
+    parser.add_argument('--batch-mode', action='store_true', help='Run in batch mode')
+    parser.add_argument('--log-level', default='INFO', help='Logging level')
+    parser.add_argument('--include-achievements', action='store_true', default=True, help='Include achievements')
+    
+    args = parser.parse_args()
+    
+    # Set logging level
+    logging.getLogger().setLevel(getattr(logging, args.log_level.upper()))
+    
+    # Get configuration from environment
     config = {
-        'STEAM_API_KEY': 'your_key_here',
-        'STEAM_ID': 'your_id_here', 
-        'NOTION_TOKEN': 'your_token_here',
-        'NOTION_DATABASE_ID': 'your_db_id_here'
+        'STEAM_API_KEY': os.getenv('STEAM_API_KEY'),
+        'STEAM_ID': os.getenv('STEAM_ID'),
+        'NOTION_TOKEN': os.getenv('NOTION_TOKEN'),
+        'NOTION_DATABASE_ID': os.getenv('NOTION_DATABASE_ID')
     }
     
-    processor = BatchGameProcessor(
-        config['STEAM_API_KEY'],
-        config['STEAM_ID'], 
-        config['NOTION_TOKEN'],
-        config['NOTION_DATABASE_ID']
-    )
+    # Validate configuration
+    missing_vars = [key for key, value in config.items() if not value]
+    if missing_vars:
+        logger.error(f"Missing required environment variables: {missing_vars}")
+        return
     
-    # This would integrate with your existing game fetching logic
-    # games = fetch_owned_games()  # Your existing method
+    logger.info("Starting Steam Gaming Tracker...")
     
-    # Example with dummy data
-    games = []  # Replace with actual Steam games list
-    
-    results = await processor.batch_sync_games_to_notion(games, include_achievements=True)
-    print(f"Batch sync results: {results}")
+    try:
+        processor = BatchGameProcessor(
+            config['STEAM_API_KEY'],
+            config['STEAM_ID'], 
+            config['NOTION_TOKEN'],
+            config['NOTION_DATABASE_ID']
+        )
+        
+        # Initialize sessions first
+        await processor.create_sessions()
+        
+        try:
+            # Fetch owned games
+            games = await processor.fetch_owned_games()
+            
+            if not games:
+                logger.warning("No games found or unable to fetch games from Steam")
+                return
+            
+            # Process games
+            include_achievements = os.getenv('INCLUDE_ACHIEVEMENTS', 'true').lower() == 'true'
+            results = await processor.batch_sync_games_to_notion(games, include_achievements=include_achievements)
+            
+            logger.info(f"Sync completed successfully")
+            print(f"Batch sync results: {results}")
+            
+        finally:
+            await processor.close_sessions()
+            
+    except Exception as e:
+        logger.error(f"Fatal error during execution: {e}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Execution interrupted by user")
+    except Exception as e:
+        logger.error(f"Execution failed: {e}")
+        sys.exit(1)
