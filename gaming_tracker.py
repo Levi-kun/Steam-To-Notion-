@@ -309,20 +309,55 @@ class BatchGameProcessor:
             await self.close_sessions()
     
     def is_valid_game(self, game_details: Dict) -> bool:
-        """Enhanced game validation with caching"""
+        """Enhanced game validation to ensure only actual games are processed, excluding DLC and software"""
         # Quick validation checks
-        if not game_details or game_details.get('type', '').lower() != 'game':
+        if not game_details:
+            logger.debug(f"Invalid game: Empty details")
             return False
         
+        # Check if it's explicitly marked as a game
+        if game_details.get('type', '').lower() != 'game':
+            logger.debug(f"Invalid game: Type is {game_details.get('type', 'unknown')}, not 'game'")
+            return False
+        
+        # Explicitly exclude DLC
+        if game_details.get('is_dlc', False) or 'dlc' in game_details.get('fullgame', {}).get('name', '').lower():
+            logger.debug(f"Invalid game: Identified as DLC")
+            return False
+        
+        # Check genres to exclude non-game categories
         genres = game_details.get('genres', [])
         if not genres:
+            logger.debug(f"Invalid game: No genres found")
             return False
         
-        # Check for non-game categories
-        non_game_genres = {'Utilities', 'Software', 'Video Production', 'Animation & Modeling'}
-        genre_names = {genre.get('description') for genre in genres}
+        # Define non-game genres and categories
+        non_game_genres = {
+            'Utilities', 'Software', 'Video Production', 'Animation & Modeling',
+            'Design & Illustration', 'Education', 'Software Training',
+            'Audio Production', 'Web Publishing', 'Photo Editing'
+        }
+        genre_names = {genre.get('description', '') for genre in genres}
         
-        return not genre_names.issubset(non_game_genres)
+        # If all genres are in non-game categories, reject
+        if genre_names and genre_names.issubset(non_game_genres):
+            logger.debug(f"Invalid game: All genres ({genre_names}) are non-game categories")
+            return False
+        
+        # Additional check: Ensure there's some gameplay-related content
+        has_gameplay_indicators = (
+            game_details.get('categories', []) or
+            game_details.get('achievements', {}).get('total', 0) > 0 or
+            'Single-player' in [cat.get('description', '') for cat in game_details.get('categories', [])] or
+            'Multi-player' in [cat.get('description', '') for cat in game_details.get('categories', [])]
+        )
+        
+        if not has_gameplay_indicators:
+            logger.debug(f"Invalid game: No gameplay indicators (categories or achievements)")
+            return False
+        
+        logger.debug(f"Valid game: {game_details.get('name', 'Unknown')} passed all checks")
+        return True
     
     async def get_existing_games_async(self) -> Dict[int, str]:
         """Asynchronously fetch existing games from Notion"""
