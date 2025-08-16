@@ -70,6 +70,11 @@ jobs:
         
     - name: Generate random surprise run
       if: github.event_name == 'schedule'
+      env:
+        STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+        STEAM_ID: ${{ secrets.STEAM_ID }}
+        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       run: |
         # Calculate if today is our "random" surprise day using deterministic randomness
         SEED=$(date +%Y)  # Use year as seed for consistent yearly randomness
@@ -95,12 +100,7 @@ jobs:
         if missing:
             raise ValueError(f'Missing required environment variables: {missing}')
         print('✅ All environment variables configured')
-    "
-      env:
-        STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
-        STEAM_ID: ${{ secrets.STEAM_ID }}
-        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+      
         
     - name: Run optimized gaming tracker
       env:
