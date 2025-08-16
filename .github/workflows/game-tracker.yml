@@ -1,185 +1,184 @@
-# .github/workflows/gaming-tracker.yml
-name: Steam Gaming Tracker
+# .github/workflows/gaming-tracker-advanced.yml
+name: Steam Gaming Tracker - Production
 
 on:
-  # Run daily at 10 PM UTC (adjust timezone as needed)
   schedule:
-    - cron: '59 11 * * *'
-    - cron: '59 23 * * *'
-  
-  # Allow manual triggering
+    # Run daily at 11:59 AM and 11:59 PM EST
+    - cron: '59 16 * * *'   # 11:59 AM EST (16:59 UTC)
+    - cron: '59 4 * * *'    # 11:59 PM EST (04:59 UTC next day)
+    # Surprise run! Random date (using Feb 29 for rarity, but will run on leap years)
+    - cron: '0 12 29 2 *'   # February 29th at noon UTC (leap year surprise!)
+    # Alternative surprise: Last day of June for mid-year gaming retrospective  
+    - cron: '30 18 30 6 *'  # June 30th at 6:30 PM UTC (mid-year surprise!)
   workflow_dispatch:
     inputs:
-      sync_type:
-        description: 'Type of sync to perform'
-        required: true
-        default: 'full'
-        type: choice
-        options:
-          - full
-          - quick
-          - report_only
       include_achievements:
-        description: 'Include achievement data (slower)'
+        description: 'Include achievement processing (slower)'
         required: false
-        default: true
+        default: 'true'
         type: boolean
-
-env:
-  PYTHON_VERSION: '3.9'
+      force_full_sync:
+        description: 'Force full sync (ignore cache)'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   sync-gaming-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Prevent infinite runs
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11']
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Set up Python
+      with:
+        fetch-depth: 1  # Shallow clone for performance
+        
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ env.PYTHON_VERSION }}
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-path: 'requirements.txt'
         
-    - name: Cache Python packages
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-          
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: Load session data from previous runs
-      uses: actions/cache@v4
+    - name: Cache game data
+      uses: actions/cache@v3
       with:
         path: |
           gaming_sessions.json
-          *.log
-        key: gaming-data-${{ github.run_number }}
+          game_cache.json
+        key: gaming-data-${{ runner.os }}-${{ hashFiles('gaming_sessions.json') }}
         restore-keys: |
-          gaming-data-
+          gaming-data-${{ runner.os }}-
           
-    - name: Run Gaming Tracker - Full Sync
-      if: ${{ github.event.inputs.sync_type == 'full' || (github.event_name == 'schedule') }}
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          curl \
+          ca-certificates
+          
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip wheel setuptools
+        pip install -r requirements.txt
+        
+    - name: Generate random surprise run
+      if: github.event_name == 'schedule'
+      run: |
+        # Calculate if today is our "random" surprise day using deterministic randomness
+        SEED=$(date +%Y)  # Use year as seed for consistent yearly randomness
+        SURPRISE_DAY=$(echo "scale=0; ($SEED % 365) + 1" | bc)
+        CURRENT_DAY=$(date +%j)  # Day of year (1-365)
+        
+        echo "🎲 Surprise day of year: $SURPRISE_DAY"
+        echo "📅 Current day of year: $CURRENT_DAY"
+        
+        if [ "$CURRENT_DAY" -eq "$SURPRISE_DAY" ]; then
+          echo "🎉 SURPRISE! Today is the random gaming tracker day!"
+          echo "SURPRISE_RUN=true" >> $GITHUB_ENV
+          
+          # Add extra flair to the surprise run
+          echo "Running extended analysis with achievement deep-dive..." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "SURPRISE_RUN=false" >> $GITHUB_ENV
+        fi
+        python -c "
+        import os
+        required_vars = ['STEAM_API_KEY', 'STEAM_ID', 'NOTION_TOKEN', 'NOTION_DATABASE_ID']
+        missing = [var for var in required_vars if not os.getenv(var)]
+        if missing:
+            raise ValueError(f'Missing required environment variables: {missing}')
+        print('✅ All environment variables configured')
+    "
       env:
         STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         STEAM_ID: ${{ secrets.STEAM_ID }}
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-      run: |
-        python -c "
-        from gaming_tracker import GamingTracker
-        import os
         
-        tracker = GamingTracker(
-            os.getenv('STEAM_API_KEY'),
-            os.getenv('STEAM_ID'),
-            os.getenv('NOTION_TOKEN'),
-            os.getenv('NOTION_DATABASE_ID')
-        )
-        
-        print('Starting full sync...')
-        results = tracker.sync_games_to_notion(include_achievements=True)
-        print(f'Full sync results: {results}')
-        
-        print('Generating report...')
-        report = tracker.generate_enhanced_gaming_report()
-        filename = tracker.save_report_to_file(report)
-        print(f'Report saved to: {filename}')
-        "
-        
-    - name: Run Gaming Tracker - Quick Sync
-      if: ${{ github.event.inputs.sync_type == 'quick' }}
+    - name: Run optimized gaming tracker
       env:
         STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         STEAM_ID: ${{ secrets.STEAM_ID }}
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        INCLUDE_ACHIEVEMENTS: ${{ inputs.include_achievements || 'true' }}
+        FORCE_FULL_SYNC: ${{ inputs.force_full_sync || 'false' }}
+        PYTHONUNBUFFERED: '1'  # Force immediate output
+        IS_SURPRISE_RUN: ${{ env.SURPRISE_RUN || 'false' }}
       run: |
-        python -c "
-        from gaming_tracker import GamingTracker
-        import os
+        if [ "$IS_SURPRISE_RUN" = "true" ]; then
+          echo "🎲 Executing surprise gaming analysis with enhanced metrics!"
+          python gaming_tracker_optimized.py --batch-mode --log-level INFO --extended-analysis --surprise-mode
+        else
+          python gaming_tracker_optimized.py --batch-mode --log-level INFO
+        fi
         
-        tracker = GamingTracker(
-            os.getenv('STEAM_API_KEY'),
-            os.getenv('STEAM_ID'),
-            os.getenv('NOTION_TOKEN'),
-            os.getenv('NOTION_DATABASE_ID')
-        )
-        
-        print('Starting quick sync...')
-        results = tracker.sync_games_to_notion(include_achievements=False)
-        print(f'Quick sync results: {results}')
-        "
-        
-    - name: Run Gaming Tracker - Report Only
-      if: ${{ github.event.inputs.sync_type == 'report_only' }}
-      env:
-        STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
-        STEAM_ID: ${{ secrets.STEAM_ID }}
-        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+    - name: Generate performance report
+      if: always()
       run: |
-        python -c "
-        from gaming_tracker import GamingTracker
-        import os
+        echo "## Gaming Tracker Performance Report" >> $GITHUB_STEP_SUMMARY
+        echo "- **Execution Time**: $(grep 'completed in' gaming_tracker.log | tail -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+        echo "- **Games Processed**: $(grep 'games processed' gaming_tracker.log | tail -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+        echo "- **API Calls Made**: $(grep -c 'API call' gaming_tracker.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
         
-        tracker = GamingTracker(
-            os.getenv('STEAM_API_KEY'),
-            os.getenv('STEAM_ID'),
-            os.getenv('NOTION_TOKEN'),
-            os.getenv('NOTION_DATABASE_ID')
-        )
-        
-        print('Generating report only...')
-        report = tracker.generate_enhanced_gaming_report()
-        filename = tracker.save_report_to_file(report)
-        print(f'Report saved to: {filename}')
-        "
-        
-    - name: Upload gaming reports as artifacts
+    - name: Upload artifacts and logs
       uses: actions/upload-artifact@v4
+      if: always()
       with:
-        name: gaming-reports-${{ github.run_number }}
+        name: gaming-tracker-results-${{ github.run_number }}
         path: |
           gaming_report_*.json
+          gaming_sessions.json
           gaming_tracker.log
-        retention-days: 30
+          *.csv
+        retention-days: 14
         
-    - name: Create summary comment
-      run: |
-        echo "## 🎮 Gaming Tracker Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Run Date:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "**Sync Type:** ${{ github.event.inputs.sync_type || 'scheduled_full' }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -f gaming_tracker.log ]; then
-          echo "**Log Summary:**" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -20 gaming_tracker.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        if ls gaming_report_*.json 1> /dev/null 2>&1; then
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Reports Generated:** ✅" >> $GITHUB_STEP_SUMMARY
-          echo "Check the artifacts section to download the latest gaming report." >> $GITHUB_STEP_SUMMARY
-        fi
-
-  # Optional: Send notifications on failure
-  notify-on-failure:
-    runs-on: ubuntu-latest
+    - name: Notify on failure
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number || 1,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: `🚨 Gaming tracker sync failed! 
+            
+            **Run ID**: ${context.runId}
+            **Commit**: ${context.sha.slice(0, 7)}
+            **Logs**: Check the Actions tab for detailed error information.`
+          });
+          
+  health-check:
     needs: sync-gaming-data
-    if: failure()
+    runs-on: ubuntu-latest
+    if: always()
     
     steps:
-    - name: Send failure notification
+    - name: Check sync health
       run: |
-        echo "Gaming tracker sync failed. Check the logs for details."
-        # You can add webhook notifications, email alerts, etc. here
+        if [[ "${{ needs.sync-gaming-data.result }}" == "success" ]]; then
+          echo "✅ Gaming tracker sync completed successfully"
+          echo "HEALTH_STATUS=healthy" >> $GITHUB_ENV
+        else
+          echo "❌ Gaming tracker sync failed"
+          echo "HEALTH_STATUS=unhealthy" >> $GITHUB_ENV
+        fi
+        
+    - name: Update repository status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const status = process.env.HEALTH_STATUS;
+          const badge_color = status === 'healthy' ? 'brightgreen' : 'red';
+          
+          // Update README badge or create status file
+          console.log(`Gaming Tracker Status: ${status}`);
+          console.log(`Badge Color: ${badge_color}`);
