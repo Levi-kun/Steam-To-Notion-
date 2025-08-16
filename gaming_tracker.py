@@ -602,15 +602,17 @@ class GamingTracker:
         for i, game in enumerate(games):
             
             app_id = game.get('appid')
-            # Skip if not a valid game
-            if not self.is_valid_game(game_details):
-                logging.info(f"Skipped {game.get('name', 'Unknown')} (AppID: {app_id}) - not a game")
-                skipped += 1
-                continue
+            
             
             try:
                 # Get detailed game information
                 game_details = self.steam_api.get_game_details(app_id)
+                
+                # Skip if not a valid game
+                if not self.is_valid_game(game_details):
+                    logging.info(f"Skipped {game.get('name', 'Unknown')} (AppID: {app_id}) - not a game")
+                    skipped += 1
+                    continue
                 
                 # Calculate session count
                 session_count = self.session_tracker.update_session_count(
