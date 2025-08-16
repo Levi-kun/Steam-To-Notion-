@@ -6,10 +6,6 @@ on:
     # Run daily at 11:59 AM and 11:59 PM EST
     - cron: '59 16 * * *'   # 11:59 AM EST (16:59 UTC)
     - cron: '59 4 * * *'    # 11:59 PM EST (04:59 UTC next day)
-    # Surprise run! Random date (using Feb 29 for rarity, but will run on leap years)
-    - cron: '0 12 29 2 *'   # February 29th at noon UTC (leap year surprise!)
-    # Alternative surprise: Last day of June for mid-year gaming retrospective  
-    - cron: '30 18 30 6 *'  # June 30th at 6:30 PM UTC (mid-year surprise!)
   workflow_dispatch:
     inputs:
       include_achievements:
@@ -68,31 +64,13 @@ jobs:
         python -m pip install --upgrade pip wheel setuptools
         pip install -r requirements.txt
         
-    - name: Generate random surprise run
-      if: github.event_name == 'schedule'
+    - name: Validate environment
       env:
         STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         STEAM_ID: ${{ secrets.STEAM_ID }}
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
       run: |
-        # Calculate if today is our "random" surprise day using deterministic randomness
-        SEED=$(date +%Y)  # Use year as seed for consistent yearly randomness
-        SURPRISE_DAY=$(echo "scale=0; ($SEED % 365) + 1" | bc)
-        CURRENT_DAY=$(date +%j)  # Day of year (1-365)
-        
-        echo "🎲 Surprise day of year: $SURPRISE_DAY"
-        echo "📅 Current day of year: $CURRENT_DAY"
-        
-        if [ "$CURRENT_DAY" -eq "$SURPRISE_DAY" ]; then
-          echo "🎉 SURPRISE! Today is the random gaming tracker day!"
-          echo "SURPRISE_RUN=true" >> $GITHUB_ENV
-          
-          # Add extra flair to the surprise run
-          echo "Running extended analysis with achievement deep-dive..." >> $GITHUB_STEP_SUMMARY
-        else
-          echo "SURPRISE_RUN=false" >> $GITHUB_ENV
-        fi
         python -c "
         import os
         required_vars = ['STEAM_API_KEY', 'STEAM_ID', 'NOTION_TOKEN', 'NOTION_DATABASE_ID']
@@ -100,9 +78,9 @@ jobs:
         if missing:
             raise ValueError(f'Missing required environment variables: {missing}')
         print('✅ All environment variables configured')
-      
+        "
         
-    - name: Run optimized gaming tracker
+    - name: Run gaming tracker
       env:
         STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
         STEAM_ID: ${{ secrets.STEAM_ID }}
@@ -111,14 +89,8 @@ jobs:
         INCLUDE_ACHIEVEMENTS: ${{ inputs.include_achievements || 'true' }}
         FORCE_FULL_SYNC: ${{ inputs.force_full_sync || 'false' }}
         PYTHONUNBUFFERED: '1'  # Force immediate output
-        IS_SURPRISE_RUN: ${{ env.SURPRISE_RUN || 'false' }}
       run: |
-        if [ "$IS_SURPRISE_RUN" = "true" ]; then
-          echo "🎲 Executing surprise gaming analysis with enhanced metrics!"
-          python gaming_tracker_optimized.py --batch-mode --log-level INFO --extended-analysis --surprise-mode
-        else
-          python gaming_tracker_optimized.py --batch-mode --log-level INFO
-        fi
+        python gaming_tracker_optimized.py --batch-mode --log-level INFO
         
     - name: Generate performance report
       if: always()
