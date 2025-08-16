@@ -93,8 +93,9 @@ class BatchGameProcessor:
             'key': self.steam_api_key,
             'steamid': self.steam_id,
             'format': 'json',
-            'include_appinfo': True,
-            'include_played_free_games': True
+            'include_appinfo': 'true',
+            'include_played_free_games': 'true',
+            'skip_unvetted_apps': 'false'
         }
         
         try:
