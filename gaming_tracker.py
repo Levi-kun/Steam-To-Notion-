@@ -604,9 +604,9 @@ class GamingTracker:
             app_id = game.get('appid')
             # Skip if not a valid game
                     if not self.is_valid_game(game_details):
-                    logging.info(f"Skipped {game.get('name', 'Unknown')} (AppID: {app_id}) - not a game")
-                    skipped += 1
-                    continue
+                        logging.info(f"Skipped {game.get('name', 'Unknown')} (AppID: {app_id}) - not a game")
+                        skipped += 1
+                        continue
             
             try:
                 # Get detailed game information
