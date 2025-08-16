@@ -90,7 +90,7 @@ jobs:
         FORCE_FULL_SYNC: ${{ inputs.force_full_sync || 'false' }}
         PYTHONUNBUFFERED: '1'  # Force immediate output
       run: |
-        python gaming_tracker_optimized.py --batch-mode --log-level INFO
+        python gaming_tracker.py --batch-mode --log-level INFO
         
     - name: Generate performance report
       if: always()
