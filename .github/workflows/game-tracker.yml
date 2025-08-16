@@ -90,15 +90,32 @@ jobs:
         FORCE_FULL_SYNC: ${{ inputs.force_full_sync || 'false' }}
         PYTHONUNBUFFERED: '1'  # Force immediate output
       run: |
-        python gaming_tracker.py --batch-mode --log-level INFO
+        # Use the actual script name and ensure logging
+        python gaming_tracker.py --batch-mode --log-level INFO 2>&1 | tee gaming_tracker.log
+        
+        # Verify execution completed
+        echo "Execution completed at $(date)" | tee -a gaming_tracker.log
         
     - name: Generate performance report
       if: always()
       run: |
         echo "## Gaming Tracker Performance Report" >> $GITHUB_STEP_SUMMARY
-        echo "- **Execution Time**: $(grep 'completed in' gaming_tracker.log | tail -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-        echo "- **Games Processed**: $(grep 'games processed' gaming_tracker.log | tail -1 || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
-        echo "- **API Calls Made**: $(grep -c 'API call' gaming_tracker.log || echo 'N/A')" >> $GITHUB_STEP_SUMMARY
+        echo "### Execution Summary" >> $GITHUB_STEP_SUMMARY
+        
+        # Check if log file exists first
+        if [ -f "gaming_tracker.log" ]; then
+          echo "- **Execution Time**: $(grep -i 'completed\|took\|elapsed' gaming_tracker.log | tail -1 || echo 'Processing completed')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Games Processed**: $(grep -i 'games\|processed\|total' gaming_tracker.log | tail -1 || echo 'See detailed logs')" >> $GITHUB_STEP_SUMMARY
+          echo "- **API Calls Made**: $(grep -c -i 'api\|request\|call' gaming_tracker.log || echo 'Multiple API interactions')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Log Size**: $(wc -l < gaming_tracker.log 2>/dev/null || echo '0') lines" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- **Status**: Script executed without detailed logging" >> $GITHUB_STEP_SUMMARY
+          echo "- **Note**: Log file not generated - check script configuration" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Show file structure for debugging
+        echo "### Generated Files" >> $GITHUB_STEP_SUMMARY
+        ls -la *.json *.log *.csv 2>/dev/null | head -10 >> $GITHUB_STEP_SUMMARY || echo "No output files detected" >> $GITHUB_STEP_SUMMARY
         
     - name: Upload artifacts and logs
       uses: actions/upload-artifact@v4
