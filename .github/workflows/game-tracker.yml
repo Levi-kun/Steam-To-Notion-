@@ -3,7 +3,7 @@ name: Steam Gaming Tracker - Production
 
 on:
   schedule:
-    # Run daily at 11:59 AM and 11:59 PM EST
+    # Updates 7 times a day!
     - cron: '0 0 * * *'   # 00:00 UTC
     - cron: '25 3 * * *'  # 03:25 UTC
     - cron: '50 6 * * *'  # 06:50 UTC
